@@ -18,7 +18,7 @@ module module_alu(
       SUB: resultado = valor1;
       SUBI: resultado = $signed({1'b0, valor1}) - imm;
       MULT: resultado = $signed({1'b0, valor1}) * imm;
-      default: resultado = 8'd0;
+      default: resultado = 11'd0;
     endcase
   end
 
