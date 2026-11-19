@@ -10,15 +10,15 @@
 //   3) 0x06 - Entry Mode Set      (incrementa cursor, sem shift do display)
 // ---------------------------------------------------------------------------
 module lcd_init_hd44780 (
-    input  wire       clk,
+    input  wire       clk,    //sincroniza o funcionamento, a cada subida do relogio os regs atualixam
     input  wire       rst,    // reset assíncrono, ativo em '1'
-    input  wire       start,
-    output reg        done,
+    input  wire       start,   //indica que comece a inicializao, 0 aguarda e 1 inicializa 
+    output reg        done,    	Informa que a inicialização terminou.
 
-    output reg  [7:0] lcd_data,
-    output reg        lcd_rs,
-    output reg        lcd_rw,
-    output reg        lcd_e
+	output reg  [7:0] lcd_data,  // indica barramento de 8 bits que transporta comandos
+    output reg        lcd_rs,    //seleciona comando ou dado  0- interpreta como comando  1- interpreta como dado
+    output reg        lcd_rw,    //seleciona leitura ou escrita  0- escreve no lcd  1- ler do lcd
+    output reg        lcd_e      //sinal de habilitação do lcd, indica o momento de receber a op
 );
 
     // -----------------------------------------------------------------------
@@ -56,7 +56,7 @@ module lcd_init_hd44780 (
     reg [31:0] delay_cnt, next_delay_cnt;
     reg [2:0]  cmd_idx, next_cmd_idx; // suporta até 8 comandos
 	 // valor do comando atual (proteção se cmd_idx >= NUM_CMDS)
-    reg [7:0] current_cmd;
+	reg [7:0] current_cmd;  //armazena comando que está sendo utilizado no momento
 
     // -----------------------------------------------------------------------
     // ROM de comandos e ROM de delays pós-comando
@@ -73,6 +73,7 @@ module lcd_init_hd44780 (
         cmd_rom[3] = CMD_ENTRY_MODE;
 
         // Delays pós-comando (exceto power-on, que é separado)
+		 //define o tempo que o circuito devera aguardar depois de enviar os comandos
         cmd_delay_rom[0] = DELAY_STD_CMD;   // FUNCTION_SET
         cmd_delay_rom[1] = DELAY_STD_CMD;   // DISPLAY_ON
         cmd_delay_rom[2] = DELAY_CLEAR_CMD; // DISPLAY_CLEAR (maior)
@@ -84,9 +85,9 @@ module lcd_init_hd44780 (
     // =======================================================================
     always @(posedge clk or posedge rst) begin
         if (rst) begin
-            state      <= S_IDLE;
-            delay_cnt  <= 32'd0;
-            cmd_idx    <= 3'd0;
+            state      <= S_IDLE;   //estado volta ao inicio 
+            delay_cnt  <= 32'd0;    //tempo sera resetado
+            cmd_idx    <= 3'd0;     //comando volta a 0
         end else begin
             state      <= next_state;
             delay_cnt  <= next_delay_cnt;
@@ -109,7 +110,7 @@ module lcd_init_hd44780 (
             // ---------------------------------------------------------------
             S_IDLE: begin
                 if (start) begin
-                    next_state     = S_POWER_WAIT;
+                    next_state     = S_POWER_WAIT;   //estado esperara comandos
                     next_delay_cnt = DELAY_POWER_ON;
                     next_cmd_idx   = 3'd0;  // começa do primeiro comando
                 end
@@ -122,7 +123,7 @@ module lcd_init_hd44780 (
                 if (delay_cnt > 0) begin
                     next_delay_cnt = delay_cnt - 1;
                 end else begin
-                    next_state     = S_SETUP;
+                    next_state     = S_SETUP;   //se prepara para o primeio comando
                 end
             end
 
@@ -146,7 +147,7 @@ module lcd_init_hd44780 (
                 if (delay_cnt > 0) begin
                     next_delay_cnt = delay_cnt - 1;
                 end else begin
-                    next_state     = S_WAIT;
+                    next_state     = S_WAIT;   //aguarda processamento de comando
                     // usa delay específico para este comando
                     next_delay_cnt = cmd_delay_rom[cmd_idx];
                 end
@@ -199,7 +200,7 @@ module lcd_init_hd44780 (
 
         case (state)
             S_IDLE: begin
-                // tudo inativo
+                // tudo inativo, saidas permanecem no estado padrão
             end
 
             S_POWER_WAIT: begin
@@ -207,7 +208,7 @@ module lcd_init_hd44780 (
             end
 
             // Em SETUP, PULSE e WAIT, sempre estamos trabalhando
-            // com o "current_cmd" como comando a ser enviado.
+            // com o "current_cmd" como comando a ser enviado. adiciona comandos no barramento
             S_SETUP: begin
                 lcd_data = current_cmd;
                 lcd_rs   = 1'b0; // comando
@@ -215,6 +216,7 @@ module lcd_init_hd44780 (
                 lcd_e    = 1'b0;
             end
 
+			//manda o pulso enable, recebe o que esta no barramento
             S_PULSE: begin
                 lcd_data = current_cmd;
                 lcd_rs   = 1'b0;
@@ -222,6 +224,7 @@ module lcd_init_hd44780 (
                 lcd_e    = 1'b1; // pulso de enable
             end
 
+			//volta o enable a zero
             S_WAIT: begin
                 lcd_data = current_cmd;
                 lcd_rs   = 1'b0;
@@ -229,6 +232,7 @@ module lcd_init_hd44780 (
                 lcd_e    = 1'b0;
             end
 
+			//indica que a inicialização terminou
             S_DONE: begin
                 done   = 1'b1;
                 lcd_e  = 1'b0;
