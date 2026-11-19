@@ -11,12 +11,13 @@
 //   - update = pulso de 1 ciclo (só com busy = 0), com op/dest/value válidos
 //   - busy   = 1 enquanto o LCD está sendo escrito
 //
-// Depende de: lcd_init_hd44780 (exemplo_ULA.txt)
+// Depende de: lcd_init_hd44780
 // Estilo: FSM com bloco sequencial / combinacional (próximo estado) / saídas.
 // Valores de delay assumem clock de 50 MHz (DE2-115).
 // ---------------------------------------------------------------------------
+
 module lcd_controller (
-    input  wire               clk,
+    input  wire               clk,      //clock
     input  wire               rst,      // reset assíncrono, ativo em 1
     input  wire               power,    // 1 = sistema ligado
     input  wire               update,   // pulso: mostrar nova informação
@@ -24,28 +25,24 @@ module lcd_controller (
     input  wire        [3:0]  dest,     // registrador (mostrado em binário)
     input  wire signed [15:0] value,    // valor com sinal
 
-    output wire               busy,
-    output wire        [7:0]  lcd_data,
-    output wire               lcd_rs,
-    output wire               lcd_rw,
-    output wire               lcd_e
+    output wire               busy, //se esta ocupado
+    output wire        [7:0]  lcd_data, //transporta os 8 bits que serão enviados ao lcd
+    output wire               lcd_rs, //define se comando ou caractere
+    output wire               lcd_rw, //define leitura ou escrita
+    output wire               lcd_e //enable
 );
 
     // -----------------------------------------------------------------------
     // Temporizações (clock de 50 MHz = 20 ns)
-    // -----------------------------------------------------------------------
-    // (parameter: o testbench pode diminuir esses valores para simular mais rápido)
     parameter [31:0] DELAY_SETUP = 32'd10;      // ~200 ns (RS/dados antes do E)
     parameter [31:0] DELAY_PULSE = 32'd50;      // ~1 us   (largura do E)
     parameter [31:0] DELAY_STD   = 32'd50_000;  // ~1 ms   (recomendado no projeto)
     parameter [31:0] DELAY_CLEAR = 32'd100_000; // ~2 ms   (Clear Display)
 
-    // Opcodes (só os que mudam o layout)
-    localparam [2:0] OP_CLEAR = 3'b110;
+    localparam [2:0] OP_CLEAR = 3'b110; //criação da var do clear
 
     // -----------------------------------------------------------------------
     // Estados
-    // -----------------------------------------------------------------------
     localparam [2:0]
         S_OFF       = 3'd0,  // desligado
         S_WAIT_INIT = 3'd1,  // lcd_init_hd44780 trabalhando
@@ -57,31 +54,29 @@ module lcd_controller (
 
     // -----------------------------------------------------------------------
     // Declarações (tudo declarado ANTES de ser usado)
-    // -----------------------------------------------------------------------
-    reg [2:0]  state, next_state;
-    reg [31:0] delay_cnt, next_delay_cnt;
-    reg [5:0]  tx_idx, next_tx_idx;      // índice da transferência (0..33)
-    reg        job_off, next_job_off;    // 1 = sequência de desligar
+    reg [2:0]  state, next_state; //estado e proximo estado
+    reg [31:0] delay_cnt, next_delay_cnt; //contador do delay e proximo contador de delay
+    reg [5:0]  tx_idx, next_tx_idx;      // índice da transferência
+    reg        job_off, next_job_off;    // sequência de desligar
 
     // Dados latcheados da instrução
     reg        is_init;                  // 1 = mostrando tela inicial
     reg [2:0]  op_r;
     reg [3:0]  dest_r;
-    reg        neg;
+    reg        neg;                      // negativo
     reg [15:0] sh;                       // magnitude (double dabble)
     reg [19:0] bcd;                      // 5 dígitos BCD
-    reg [4:0]  bcd_cnt;
+    reg [4:0]  bcd_cnt;                  // contador do bcd
 
     reg        init_rst_r;               // reset do módulo init (registrado)
 
     wire [7:0] init_data;
     wire       init_rs, init_rw, init_e, init_done;
     wire       start_init = (state == S_WAIT_INIT);
-    wire       accept     = (state == S_IDLE) && power && update;
+    wire       accept     = (state == S_IDLE) && power && update; //operacao aceita
 
     // -----------------------------------------------------------------------
     // Instância do módulo de inicialização
-    // -----------------------------------------------------------------------
     lcd_init_hd44780 lcd_init (
         .clk      (clk),
         .rst      (init_rst_r),
@@ -95,14 +90,13 @@ module lcd_controller (
 
     // -----------------------------------------------------------------------
     // Função: caractere da posição i (0..15 = linha 1, 16..31 = linha 2)
-    // -----------------------------------------------------------------------
     function [7:0] get_char;
-        input [4:0] i;
-        input       init;
-        input [2:0] opc;
-        input [3:0] dst;
-        input       ng;
-        input [19:0] b;
+        input [4:0] i; //posicao do caractere
+        input       init; //indica se esta mostrando a tela
+        input [2:0] opc; //codigo da operacao
+        input [3:0] dst; //reg de destino
+        input       ng; //negativo?
+        input [19:0] b; //resultado convertido
         reg  [79:0] name;   // 10 caracteres
         reg         name_only;
         begin
@@ -156,30 +150,34 @@ module lcd_controller (
     //   idx 18..33  : caracteres 16..31
     //   (job_off)   : 0x01 (clear) e 0x08 (display off)
     // -----------------------------------------------------------------------
-    reg [7:0] tx_byte;
-    reg       tx_rs;
-    reg       tx_last;
+    reg [7:0] tx_byte; //byte que será enviado
+    reg       tx_rs; //caractere ou comando
+    reg       tx_last; //ultimo byte?
 
     always @(*) begin
         tx_byte = 8'h00;
         tx_rs   = 1'b0;
         tx_last = 1'b0;
         if (job_off) begin
-            tx_byte = (tx_idx == 6'd0) ? 8'h01 : 8'h08;
+            tx_byte = (tx_idx == 6'd0) ? 8'h01 : 8'h08; 
             tx_last = (tx_idx == 6'd1);
         end else begin
             if (tx_idx == 6'd0)
-                tx_byte = 8'h80;
-            else if (tx_idx <= 6'd16) begin
+                tx_byte = 8'h80; //posicionando o cursor no começo da primeira linha (quando tx vale 0)
+            
+            else if (tx_idx <= 6'd16) begin //nas posições de 1 até 16, envia os 16 caracteres da primeira linha
                 tx_byte = get_char(tx_idx - 6'd1, is_init, op_r, dest_r, neg, bcd);
                 tx_rs   = 1'b1;
-            end else if (tx_idx == 6'd17)
-                tx_byte = 8'hC0;
-            else begin
+                
+            end else if (tx_idx == 6'd17) 
+                tx_byte = 8'hC0; //posicionando o cursor no começo da primeira linha (quando tx vale 17)
+            
+            else begin //nas posições de 18 até 33, envia os 16 caracteres da segunda linha
                 tx_byte = get_char(tx_idx - 6'd2, is_init, op_r, dest_r, neg, bcd);
                 tx_rs   = 1'b1;
+                
             end
-            tx_last = (tx_idx == 6'd33);
+            tx_last = (tx_idx == 6'd33); //ultimo tx?
         end
     end
 
@@ -188,15 +186,15 @@ module lcd_controller (
 
     // =======================================================================
     // 1) BLOCO SEQUENCIAL: controle
-    // =======================================================================
+    
     always @(posedge clk or posedge rst) begin
-        if (rst) begin
+        if (rst) begin //resetou?
             state      <= S_OFF;
             delay_cnt  <= 32'd0;
             tx_idx     <= 6'd0;
             job_off    <= 1'b0;
             init_rst_r <= 1'b1;
-        end else begin
+        end else begin //nao resetou?
             state      <= next_state;
             delay_cnt  <= next_delay_cnt;
             tx_idx     <= next_tx_idx;
@@ -207,9 +205,9 @@ module lcd_controller (
 
     // =======================================================================
     // 1b) BLOCO SEQUENCIAL: datapath (latch da instrução + BCD)
-    // =======================================================================
+    
     always @(posedge clk or posedge rst) begin
-        if (rst) begin
+        if (rst) begin //resetou?
             is_init <= 1'b1;
             op_r    <= 3'd0;
             dest_r  <= 4'd0;
@@ -217,7 +215,8 @@ module lcd_controller (
             sh      <= 16'd0;
             bcd     <= 20'd0;
             bcd_cnt <= 5'd0;
-        end else begin
+            
+        end else begin //nao resetou?
             if (state == S_OFF || state == S_WAIT_INIT) begin
                 // prepara a tela inicial
                 is_init <= 1'b1;
@@ -225,24 +224,26 @@ module lcd_controller (
                 dest_r  <= 4'd0;
                 neg     <= 1'b0;
                 bcd     <= 20'd0;
-            end else if (accept) begin
+                
+            end else if (accept) begin //nova operação foi aceita?
                 is_init <= 1'b0;
                 op_r    <= op;
                 dest_r  <= dest;
-                neg     <= value[15];
-                sh      <= value[15] ? (~value + 16'd1) : value;  // magnitude
+                neg     <= value[15]; //guarda o sinal
+                sh      <= value[15] ? (~value + 16'd1) : value;  // magnitude/valor absoluto (usando complementa 2)
                 bcd     <= 20'd0;
                 bcd_cnt <= 5'd0;
+                
             end else if (state == S_BCD) begin
-                {bcd, sh} <= {adj(bcd), sh} << 1;
-                bcd_cnt   <= bcd_cnt + 5'd1;
+                {bcd, sh} <= {adj(bcd), sh} << 1; //junta os bits (bcd e sh), inplementa a funcao e desloca 1 bit
+                bcd_cnt   <= bcd_cnt + 5'd1; //resultado da conversão
             end
         end
     end
 
     // =======================================================================
     // 2) BLOCO COMBINACIONAL: próximo estado / delay / índice
-    // =======================================================================
+    
     always @(*) begin
         next_state     = state;
         next_delay_cnt = delay_cnt;
@@ -277,7 +278,7 @@ module lcd_controller (
             end
 
             S_BCD: begin
-                if (bcd_cnt == 5'd15) begin
+                if (bcd_cnt == 5'd15) begin //acabou a conversão?
                     next_job_off   = 1'b0;
                     next_tx_idx    = 6'd0;
                     next_delay_cnt = DELAY_SETUP;
@@ -325,15 +326,16 @@ module lcd_controller (
 
     // =======================================================================
     // 3) BLOCO COMBINACIONAL: saídas (Moore)
-    // =======================================================================
+    
     reg [7:0] wr_data;
     reg       wr_rs;
     reg       wr_e;
 
     always @(*) begin
-        wr_data = 8'h00;
-        wr_rs   = 1'b0;
-        wr_e    = 1'b0;
+        wr_data = 8'h00; //byte
+        wr_rs   = 1'b0; //comando ou caractere (dado)
+        wr_e    = 1'b0; //enable (momento em que deve receber e processar o comando)
+        
         case (state)
             S_SETUP, S_PULSE, S_WAIT: begin
                 wr_data = tx_byte;
@@ -351,6 +353,6 @@ module lcd_controller (
     assign lcd_rw   = sel_init ? init_rw   : 1'b0;
     assign lcd_e    = sel_init ? init_e    : wr_e;
 
-    assign busy = (state != S_IDLE);
+    assign busy = (state != S_IDLE); //se nao esta no estado do IDLE, esta ocupado e nao deve receber novos dados
 
 endmodule
