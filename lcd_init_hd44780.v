@@ -13,7 +13,7 @@ module lcd_init_hd44780 (
     input  wire       clk,    //sincroniza o funcionamento, a cada subida do relogio os regs atualixam
     input  wire       rst,    // reset assíncrono, ativo em '1'
     input  wire       start,   //indica que comece a inicializao, 0 aguarda e 1 inicializa 
-    output reg        done,    	Informa que a inicialização terminou.
+    output reg        done,    	//Informa que a inicialização terminou.
 
 	output reg  [7:0] lcd_data,  // indica barramento de 8 bits que transporta comandos
     output reg        lcd_rs,    //seleciona comando ou dado  0- interpreta como comando  1- interpreta como dado
